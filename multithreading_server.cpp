@@ -52,9 +52,13 @@ int main() {
         if (command == "list") list();
         else if (command == "write") write();
         else if (command == "kill") kill();
-        else if (command == "killall") killall();
+        else if (command == "killall") {
+            killall();
+            std::cout << "All clients are disabled" << std::endl;
+        }
         else if (command == "shutdown") {
             killall();
+            std::cout << "All clients are disabled" << std::endl;
             shutdown(server_socket, SHUT_RDWR);
             close(server_socket);
             break;

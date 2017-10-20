@@ -105,7 +105,6 @@ void killall() {
     std::unique_lock<std::mutex> lock(client_mutex);
     for (auto &&client : clients)
         lazy_kill(client.first);
-    std::cout << "All clients are disabled" << std::endl;
 }
 
 // вывод всех команд, которые можно использовать на сервере
@@ -209,7 +208,6 @@ void connection_handler(int desc_sock) {
                 ss << buffer << "(" << a << ")";
                 std::string request = ss.str();
                 std::cout << "Client " << desc_sock << " send request: " << request << std::endl;
-                std::cout << buffer << std::endl;
                 std::string response = input_slow_proccssing(a, buffer);
                 std::cout << "Server's response: " << response << std::endl;
                 send(desc_sock, response.c_str(), BUFFER_SIZE, 0);
