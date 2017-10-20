@@ -160,13 +160,11 @@ std::string input_fast_proccssing(int a, char sing, int b) {
 
 // обработка "медленного" входного примера
 std::string input_slow_proccssing(int a, char action[]) {
-    const std::string FACT = "fact";
-    const std::string SQRT = "sqrt";
     double result = 0;
     std::stringstream ss;
-    if (action == FACT) {
+    if (strcmp(action, FACTORIAL) == 0) {
         result = (double) factorial(a);
-    } else if (action == SQRT) {
+    } else if (strcmp(action, SQRT) == 0) {
         result = mysqrt(a);
     }
     ss << result;
@@ -211,6 +209,7 @@ void connection_handler(int desc_sock) {
                 ss << buffer << "(" << a << ")";
                 std::string request = ss.str();
                 std::cout << "Client " << desc_sock << " send request: " << request << std::endl;
+                std::cout << buffer << std::endl;
                 std::string response = input_slow_proccssing(a, buffer);
                 std::cout << "Server's response: " << response << std::endl;
                 send(desc_sock, response.c_str(), BUFFER_SIZE, 0);
