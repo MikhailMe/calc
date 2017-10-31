@@ -1,18 +1,18 @@
 #pragma once
 
-#include <cstring>
 #include <sys/socket.h>
 #include <arpa/inet.h>
 #include <unistd.h>
 #include <iostream>
-#include <thread>
+#include <cstring>
 #include <unordered_map>
 #include <mutex>
 #include <sstream>
 
 #include "constants.h"
-#include "fast_operations.h"
 #include "slow_operations.h"
+static int request_number = 0;
+static int response_number = 0;
 
 // читаем столько, сколько пришло
 ssize_t readn(int socket, char *message, size_t length, int flags) {
@@ -50,7 +50,9 @@ int enter() {
             std::cout << "Please enter valid id of client" << std::endl;
             std::cin.clear();
             while (std::cin.get() != '\n');
-        } else if (clients.count(desc_sock) > 0) break;
+        } else if (clients.count(desc_sock) > 0) {
+            break;
+        }
     }
     return desc_sock;
 }
@@ -74,284 +76,194 @@ void write() {
     else std::cout << "Sorry, but this client doesn't exist" << std::endl;
 }
 
-// убиваем клиента по дескриптору сокета
-void kill(int desc_sock) {
-    if (clients.count(desc_sock) > 0) {
-        shutdown(desc_sock, SHUT_RDWR);
-        close(desc_sock);
-        auto &&thread = clients.find(desc_sock)->second;
-        if (thread.joinable())
-            thread.join();
-        std::cout << "\nClient " << desc_sock << " disconnected" << std::endl;
-    } else std::cout << "Sorry, but this client doesn't exist" << std::endl;
-}
-
-// говорим, что необходимо удалить desc_sock
-void lazy_kill(int desc_sock) {
-    if (client_states.count(desc_sock) > 0)
-        client_states[desc_sock] = true;
-}
-
 // убиваем определённого клиента
 void kill() {
     int desc_sock = enter();
-    std::unique_lock<std::mutex> lock(client_mutex);
-    lazy_kill(desc_sock);
+    pthread_mutex_lock(&mutex);
+    if (client_states.count(desc_sock) > 0)
+        client_states[desc_sock] = true;
+    pthread_mutex_unlock(&mutex);
     std::cout << "You kill " << desc_sock << " client";
 }
 
 // убиваем всех клиентов
 void killall() {
-    std::unique_lock<std::mutex> lock(client_mutex);
+    pthread_mutex_lock(&mutex);
     for (auto &&client : clients)
-        lazy_kill(client.first);
-}
-
-// вывод всех команд, которые можно использовать на сервере
-void server_help() {
-    std::cout << "You can use the following commands:" << std::endl;
-    std::cout << "list     -  show list of all clients" << std::endl;
-    std::cout << "write    -  send message to certain client" << std::endl;
-    std::cout << "kill     -  remove certain client" << std::endl;
-    std::cout << "killall  -  remove all clients" << std::endl;
-    std::cout << "shutdown -  server shutdown" << std::endl;
-}
-
-// вывод всех команд, которые можно использовать на клиенте
-void client_help() {
-    std::cout << "Hello from server!" << std::endl;
-    std::cout << "text - write any message to server" << std::endl;
-    std::cout << "count - send to server math example" << std::endl;
-    std::cout << "shutdown - disconnect from the server" << std::endl;
+        client_states[client.first] = true;
+    pthread_mutex_unlock(&mutex);
+    std::cout << "All clients are disabled" << std::endl;
 }
 
 // вывод отосланной и принятой информации клиента
-//void printServer(int desc_sock, char request[], char response[]) {
 void printServer(int desc_sock, char request[], char response[]) {
-    std::cout << "Client " << desc_sock << " send request: " << request << std::endl;
-    std::cout << "Server's response: " << response << std::endl;
+    std::cout << "Client's " << desc_sock << " request #" << ++request_number << ": " << request << std::endl;
+    std::cout << "txtServer's response #" << ++response_number << ": " << response << "\n" << std::endl;
 }
 
 // обработка "быстрого" входного примера
-std::string input_fast_proccssing(int a, char sing, int b) {
+std::string input_fast_processing(double a, const std::string &operation, double b) {
     double result = 0;
-    switch (sing) {
-        case '+':
-            result = addition(a, b);
-            break;
-        case '-':
-            result = subtraction(a, b);
-            break;
-        case '*':
-            result = multiplication(a, b);
-            break;
-        case '/':
-            result = divide(a, b);
-            break;
-        default:
-            std::cout << "incorrect operation" << std::endl;
-            break;
-    }
+    if (operation == "+")
+        result = a + b;
+    else if (operation == "-")
+        result = a - b;
+    else if (operation == "*")
+        result = a * b;
+    else if (operation == "/")
+        result = a / b;
+    else std::cout << "incorrect operation" << std::endl;
     std::stringstream ss;
     ss << result;
     return ss.str();
 }
 
 // обработка "медленного" входного примера
-std::string input_slow_proccssing(int a, char action[]) {
+std::string input_slow_processing(double a, const std::string &operation) {
     double result = 0;
     std::stringstream ss;
-    if (strcmp(action, FACTORIAL) == 0) {
-        result = (double) factorial(a);
-    } else if (strcmp(action, SQRT) == 0) {
+    if (operation == FACTORIAL)
+        result = factorial(a);
+    else if (operation == SQRT)
         result = mysqrt(a);
-    }
     ss << result;
     return ss.str();
 }
 
-// хэндлер каждого клиента
-void connection_handler(int desc_sock) {
-    while (true) {
-        char buffer[BUFFER_SIZE];
-        ssize_t read_size = readn(desc_sock, buffer, BUFFER_SIZE, 0);
-        if (read_size <= 0 || strcmp(buffer, EXIT) == 0)
-            break;
-        else if (strcmp(buffer, COUNT) == 0) {
-            // первая чиселка
-            read_size = readn(desc_sock, buffer, BUFFER_SIZE, 0);
-            if (read_size <= 0) break;
-            std::string digit_one(buffer);
-            int a = std::stoi(digit_one);
-            // знак
-            read_size = readn(desc_sock, buffer, BUFFER_SIZE, 0);
-            if (read_size <= 0) break;
-            // смотрим какая операция: быстрая или долгая
-            if (buffer[0] == '+' || buffer[0] == '-' || buffer[0] == '*' || buffer[0] == '/') {
-                char sign = buffer[0];
-                // вторая чиселка
-                read_size = readn(desc_sock, buffer, BUFFER_SIZE, 0);
-                if (read_size <= 0) break;
-                std::string digit_two(buffer);
-                int b = std::stoi(digit_two);
-                // делаем строку-пример
-                std::stringstream ss;
-                ss << a << sign << b;
-                std::string request = ss.str();
-                // формирование вывода на экран
-                std::cout << "Client " << desc_sock << " send request: " << request << std::endl;
-                std::string response = input_fast_proccssing(a, sign, b);
-                std::cout << "Server's response: " << response << std::endl;
-                send(desc_sock, response.c_str(), BUFFER_SIZE, 0);
-            } else if (strcmp(buffer, SQRT) == 0 || strcmp(buffer, FACTORIAL) == 0) {
-                std::stringstream ss;
-                ss << buffer << "(" << a << ")";
-                std::string request = ss.str();
-                std::cout << "Client " << desc_sock << " send request: " << request << std::endl;
-                std::string response = input_slow_proccssing(a, buffer);
-                std::cout << "Server's response: " << response << std::endl;
-                send(desc_sock, response.c_str(), BUFFER_SIZE, 0);
-            }
-        } else if (strcmp(buffer, TEXT) == 0) {
-            read_size = readn(desc_sock, buffer, BUFFER_SIZE, 0);
-            if (read_size <= 0) break;
-            send(desc_sock, buffer, BUFFER_SIZE, 0);
-            printServer(desc_sock, buffer, buffer);
-        }
-    }
-    close(desc_sock);
+void *t_text(int desc_sock, char *text) {
+    ssize_t read_size = readn(desc_sock, text, BUFFER_SIZE, 0);
+    if (read_size <= 0)return nullptr;
+    send(desc_sock, text, BUFFER_SIZE, 0);
+    printServer(desc_sock, text, text);
 }
 
-// если клиент сам отключился, то удаляем его из двух мап через 0,01 секунды
+Count_info *read_count(int desc_sock, char *buffer) {
+    // создали структуру, в которую считаем данные для вычислений клиента
+    auto *ready_to_process = new Count_info();
+    ready_to_process->isSlow = true;
+    ready_to_process->desc_sock = desc_sock;
+    // прочитаем первую чиселку
+    ssize_t read_size = readn(desc_sock, buffer, BUFFER_SIZE, 0);
+    if (read_size <= 0) return nullptr;
+    ready_to_process->digit1 = std::stoi(buffer);
+    // прочитаем операцию
+    read_size = readn(desc_sock, buffer, BUFFER_SIZE, 0);
+    if (read_size <= 0) return nullptr;
+    std::string operation = buffer;
+    ready_to_process->operation = operation;
+    // если операция '+', '-', '*', '/', то надо прочитать вторую чиселку
+    // если операция factorial или sqrt, то можно сразу отправлять на вычисление
+    if (buffer[0] == '+' || buffer[0] == '-' || buffer[0] == '*' || buffer[0] == '/') {
+        // прочитаем вторую чиселку
+        read_size = readn(desc_sock, buffer, BUFFER_SIZE, 0);
+        if (read_size <= 0) return nullptr;
+        ready_to_process->digit2 = std::stoi(buffer);
+        ready_to_process->isSlow = false;
+        // FIXME
+    } else ready_to_process->digit2 = -52303334;
+    return ready_to_process;
+}
+
+void *processing(void *count_inf) {
+    // закастили структуру
+    auto *count_info = (Count_info *) count_inf;
+    // строка для ответа
+    std::string response;
+    // FIXME сохраняем номер запроса
+    int temp_response_number = response_number;
+    // в зависимости от того какого типа операция, выполняем считывание аргументов для вычислений
+    if (count_info->isSlow) {
+        // формируем запрос по струкуре @count_info для долгих операций
+        std::stringstream ss;
+        ss << count_info->operation << "(" << count_info->digit1 << ")";
+        std::string request = ss.str();
+        std::cout << "\nClient " << count_info->desc_sock
+                  << " send request#" << ++request_number << ": " << request << std::endl;
+        // формируем ответ по запросу
+        response = input_slow_processing(count_info->digit1, count_info->operation);
+        // отправляем ответ на клиенту
+        send(count_info->desc_sock, response.c_str(), BUFFER_SIZE, 0);
+    } else {
+        // FIXME
+        ++temp_response_number;
+        // формируем запрос по струкуре @count_info для быстрых операций
+        std::stringstream ss;
+        ss << count_info->digit1 << " " << count_info->operation << " " << count_info->digit2;
+        std::string request = ss.str();
+        std::cout << "Client " << count_info->desc_sock
+                  << " send request#" << ++request_number << ": " << request << std::endl;
+        // формируем ответ по запросу
+        response = input_fast_processing(count_info->digit1, count_info->operation, count_info->digit2);
+        // отправляем ответ на клиенту
+        send(count_info->desc_sock, response.c_str(), BUFFER_SIZE, 0);
+    }
+    // FIXME
+    std::cout << "Server's response#" << temp_response_number << ": " << response << "\n" << std::endl;
+    pthread_exit(nullptr);
+}
+
+
+// хэндлер каждого клиента
+void *connection_handler(void *sock) {
+    // кастим к int, к нормальному виду дескриптора сокета
+    auto &&desc_sock = (int) (intptr_t) sock;
+    // отдельный поток для вычислений
+    pthread_t count_thread = 0;
+    // цикл на чтение команд от клиента
+    while (true) {
+        char buffer[BUFFER_SIZE];
+        // считываем команду, подаваемую клиентом
+        ssize_t read_size = readn(desc_sock, buffer, BUFFER_SIZE, 0);
+        // инициализация структурты для pthread_create
+        if (read_size <= 0 || strcmp(buffer, EXIT) == 0) {
+            pthread_mutex_lock(&mutex);
+            client_states[desc_sock] = true;
+            pthread_mutex_unlock(&mutex);
+            break;
+        } else if (strcmp(buffer, TEXT) == 0) {
+            t_text(desc_sock, buffer);
+        } else if (strcmp(buffer, COUNT) == 0) {
+            auto *count = read_count(desc_sock, buffer);
+            pthread_create(&count_thread, nullptr, &processing, count);
+        }
+    }
+    pthread_join(count_thread, nullptr);
+    close(desc_sock);
+    pthread_exit(nullptr);
+}
+
+// бегает по мапе @client_states и удаляет клиентов, если отключились через 0.01 секунды
 // работает всегда
 void cleanup() {
-    std::unique_lock<std::mutex> lock(client_mutex);
+    pthread_mutex_lock(&mutex);
     auto &&it = std::begin(client_states);
     while (it != std::end(client_states)) {
         auto &&entry = *it;
         auto &&fd = entry.first;
         auto &&needClose = entry.second;
         if (needClose) {
-            kill(fd);
+            // закрываем сокет
+            shutdown(fd, SHUT_RDWR);
+            close(fd);
+            // находим поток в основной паме по дескиптору сокета
+            auto &&thread = clients.find(fd)->second;
+            // джойним потоу
+            pthread_join(thread, nullptr);
+            std::cout << "\nClient " << fd << " disconnected" << std::endl;
+            // удаляем из мапы состяний
             it = client_states.erase(it);
+            // удаляем из основной мапы
             clients.erase(fd);
             continue;
         }
         ++it;
     }
+    pthread_mutex_unlock(&mutex);
 }
 
-// закрываем сокет при неудаче
+// если произошла исключительная ситуация, пишем сообщение об ошибке и закрываем сокет
 void closing(int server_socket, const char *closing_message) {
     perror(closing_message);
     shutdown(server_socket, SHUT_RDWR);
     close(server_socket);
-}
-
-// хэдлер сервера
-void server_handler(int server_socket) {
-    int new_socket;
-    while (true) {
-        // задаёем таймаут
-        timeval timeout{TIMEOUT_SEC, TIMEOUT_USEC};
-        // задаём множество сокетов
-        fd_set server_sockets{};
-        FD_ZERO(&server_sockets);
-        FD_SET(server_socket, &server_sockets);
-        // выбираем сокет, у которого возник какой-то ивент
-        auto &&result = select(server_socket + 1, &server_sockets, nullptr, nullptr, &timeout);
-        cleanup();
-        if (result < 0) {
-            closing(server_socket, "Select failed");
-            break;
-        }
-        if (result == 0 || !FD_ISSET(server_socket, &server_sockets))
-            continue;
-        // асептим новый сокет
-        new_socket = accept(server_socket, nullptr, nullptr);
-        if (new_socket < 0) {
-            closing(server_socket, "Accept failed");
-            break;
-        }
-        std::cout << "\nConnection accepted" << std::endl;
-        std::cout << "In list we have: " << clients.size() + 1 << std::endl;
-        // так как new_socket пока не нужно убивать ставим false
-        {
-            std::unique_lock<std::mutex> lock(client_mutex);
-            client_states[new_socket] = false;
-        }
-        // добавляем клиентов в мапу и даём каждому поток
-        {
-            std::unique_lock<std::mutex> lock(mutex);
-            clients.emplace(new_socket, [new_socket]() -> void {
-                try {
-                    connection_handler(new_socket);
-                } catch (...) {}
-                // необходимо убить new_socket, поэтому ставим true
-                client_states[new_socket] = true;
-            });
-        }
-    }
-}
-
-// хэндлер клиента для чтения в отдельном потоке
-void client_read_handler(int desc_sock) {
-    char buffer[BUFFER_SIZE + 1];
-    while (true) {
-        bzero(buffer, BUFFER_SIZE + 1);
-        // слушаем сервер
-        if (readn(desc_sock, buffer, BUFFER_SIZE, 0) <= 0) {
-            perror("Readn failed");
-            close(desc_sock);
-            break;
-        }
-        // если сервер прислал "shutdown", то умираем
-        if (strcmp(buffer, EXIT) == 0)
-            break;
-        std::cout << "Server's response: " << buffer << std::endl;
-    }
-    close(desc_sock);
-}
-
-//  отправляем пример серверу
-void count(int client_socket) {
-    std::string message = COUNT;
-    send(client_socket, message.c_str(), BUFFER_SIZE, 0);
-    std::string temp;
-    // первая чиселка
-    std::cout << "Enter first digit: ";
-    std::getline(std::cin, message);
-    temp += message;
-    temp += " ";
-    send(client_socket, message.c_str(), BUFFER_SIZE, 0);
-    // знак
-    std::cout << "Enter sign: ";
-    std::getline(std::cin, message);
-    temp += message;
-    temp += " ";
-    send(client_socket, message.c_str(), BUFFER_SIZE, 0);
-    // если выполняем долгую операцию => вторая чиселка просто не нужна!
-    if (strcmp(message.c_str(), SQRT) != 0 && strcmp(message.c_str(), FACTORIAL) != 0) {
-        // вторая чиселка
-        std::cout << "Enter second digit: ";
-        std::getline(std::cin, message);
-        temp += message;
-        std::cout << "Client's request : " << temp << std::endl;
-        send(client_socket, message.c_str(), BUFFER_SIZE, 0);
-    }
-}
-
-// отправляем просто текст серверу
-void text(int client_socket) {
-    std::string message = TEXT;
-    // отправили серверу уведомление, что сейчас будет текст
-    if (send(client_socket, message.c_str(), BUFFER_SIZE, 0) < 0) {
-        perror("Send error");
-    }
-    std::cout << "Your message to server: ";
-    std::getline(std::cin, message);
-    // отправляем message на сервер
-    if (send(client_socket, message.c_str(), BUFFER_SIZE, 0) == -1) {
-        perror("Send error");
-    }
 }

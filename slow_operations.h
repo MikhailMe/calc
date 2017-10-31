@@ -1,13 +1,15 @@
 #pragma once
 
 #include <math.h>
+#include <thread>
 
-unsigned long factorial(int a) {
-    if(a < 0) return 0;
-    if (a == 0) return 1;
-    else return a * factorial(a - 1);
+double factorial(double num) {
+    if (num < 0) return 0;
+    if (num == 0) return 1;
+    else return num * factorial(num - 1);
 }
 
-double mysqrt(double a) {
-    return sqrt(a);
+double mysqrt(double num) {
+    std::this_thread::sleep_for(std::chrono::seconds(5));
+    return sqrt(num);
 }
