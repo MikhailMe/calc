@@ -11,8 +11,6 @@
 
 #include "constants.h"
 #include "slow_operations.h"
-static int request_number = 0;
-static int response_number = 0;
 
 // читаем столько, сколько пришло
 ssize_t readn(int socket, char *message, size_t length, int flags) {
@@ -79,26 +77,24 @@ void write() {
 // убиваем определённого клиента
 void kill() {
     int desc_sock = enter();
-    pthread_mutex_lock(&mutex);
+    std::unique_lock<std::mutex> lock(client_mutex);
     if (client_states.count(desc_sock) > 0)
         client_states[desc_sock] = true;
-    pthread_mutex_unlock(&mutex);
     std::cout << "You kill " << desc_sock << " client";
 }
 
 // убиваем всех клиентов
 void killall() {
-    pthread_mutex_lock(&mutex);
+    std::unique_lock<std::mutex> lock(client_mutex);
     for (auto &&client : clients)
         client_states[client.first] = true;
-    pthread_mutex_unlock(&mutex);
     std::cout << "All clients are disabled" << std::endl;
 }
 
 // вывод отосланной и принятой информации клиента
 void printServer(int desc_sock, char request[], char response[]) {
-    std::cout << "Client's " << desc_sock << " request #" << ++request_number << ": " << request << std::endl;
-    std::cout << "txtServer's response #" << ++response_number << ": " << response << "\n" << std::endl;
+    std::cout << "Client's " << desc_sock << " request : " << request << std::endl;
+    std::cout << "Server's response: " << response << "\n" << std::endl;
 }
 
 // обработка "быстрого" входного примера
@@ -159,8 +155,7 @@ Count_info *read_count(int desc_sock, char *buffer) {
         if (read_size <= 0) return nullptr;
         ready_to_process->digit2 = std::stoi(buffer);
         ready_to_process->isSlow = false;
-        // FIXME
-    } else ready_to_process->digit2 = -52303334;
+    } else ready_to_process->digit2 = 0;
     return ready_to_process;
 }
 
@@ -169,8 +164,6 @@ void *processing(void *count_inf) {
     auto *count_info = (Count_info *) count_inf;
     // строка для ответа
     std::string response;
-    // FIXME сохраняем номер запроса
-    int temp_response_number = response_number;
     // в зависимости от того какого типа операция, выполняем считывание аргументов для вычислений
     if (count_info->isSlow) {
         // формируем запрос по струкуре @count_info для долгих операций
@@ -178,30 +171,28 @@ void *processing(void *count_inf) {
         ss << count_info->operation << "(" << count_info->digit1 << ")";
         std::string request = ss.str();
         std::cout << "\nClient " << count_info->desc_sock
-                  << " send request#" << ++request_number << ": " << request << std::endl;
+                  << " send request: " << request << std::endl;
         // формируем ответ по запросу
         response = input_slow_processing(count_info->digit1, count_info->operation);
+        std::cout << "Server's response: " << response << "\n" << std::endl;
         // отправляем ответ на клиенту
         send(count_info->desc_sock, response.c_str(), BUFFER_SIZE, 0);
     } else {
-        // FIXME
-        ++temp_response_number;
         // формируем запрос по струкуре @count_info для быстрых операций
         std::stringstream ss;
         ss << count_info->digit1 << " " << count_info->operation << " " << count_info->digit2;
         std::string request = ss.str();
-        std::cout << "Client " << count_info->desc_sock
-                  << " send request#" << ++request_number << ": " << request << std::endl;
+        std::cout << "\nClient " << count_info->desc_sock
+                  << " send request: " << request << std::endl;
+        //response_number++;
         // формируем ответ по запросу
         response = input_fast_processing(count_info->digit1, count_info->operation, count_info->digit2);
+        std::cout << "Server's response: " << response << "\n" << std::endl;
         // отправляем ответ на клиенту
         send(count_info->desc_sock, response.c_str(), BUFFER_SIZE, 0);
     }
-    // FIXME
-    std::cout << "Server's response#" << temp_response_number << ": " << response << "\n" << std::endl;
     pthread_exit(nullptr);
 }
-
 
 // хэндлер каждого клиента
 void *connection_handler(void *sock) {
@@ -216,18 +207,17 @@ void *connection_handler(void *sock) {
         ssize_t read_size = readn(desc_sock, buffer, BUFFER_SIZE, 0);
         // инициализация структурты для pthread_create
         if (read_size <= 0 || strcmp(buffer, EXIT) == 0) {
-            pthread_mutex_lock(&mutex);
+            std::unique_lock<std::mutex> lock(wait_mutex);
             client_states[desc_sock] = true;
-            pthread_mutex_unlock(&mutex);
             break;
         } else if (strcmp(buffer, TEXT) == 0) {
             t_text(desc_sock, buffer);
         } else if (strcmp(buffer, COUNT) == 0) {
-            auto *count = read_count(desc_sock, buffer);
-            pthread_create(&count_thread, nullptr, &processing, count);
+            pthread_create(&count_thread, nullptr, &processing, read_count(desc_sock, buffer));
         }
     }
-    pthread_join(count_thread, nullptr);
+    if (count_thread != 0)
+        pthread_join(count_thread, nullptr);
     close(desc_sock);
     pthread_exit(nullptr);
 }
@@ -235,7 +225,7 @@ void *connection_handler(void *sock) {
 // бегает по мапе @client_states и удаляет клиентов, если отключились через 0.01 секунды
 // работает всегда
 void cleanup() {
-    pthread_mutex_lock(&mutex);
+    std::unique_lock<std::mutex> lock(client_mutex);
     auto &&it = std::begin(client_states);
     while (it != std::end(client_states)) {
         auto &&entry = *it;
@@ -246,9 +236,9 @@ void cleanup() {
             shutdown(fd, SHUT_RDWR);
             close(fd);
             // находим поток в основной паме по дескиптору сокета
-            auto &&thread = clients.find(fd)->second;
+            auto &&pthread = clients.find(fd)->second;
             // джойним потоу
-            pthread_join(thread, nullptr);
+            pthread_join(pthread, nullptr);
             std::cout << "\nClient " << fd << " disconnected" << std::endl;
             // удаляем из мапы состяний
             it = client_states.erase(it);
@@ -258,7 +248,6 @@ void cleanup() {
         }
         ++it;
     }
-    pthread_mutex_unlock(&mutex);
 }
 
 // если произошла исключительная ситуация, пишем сообщение об ошибке и закрываем сокет

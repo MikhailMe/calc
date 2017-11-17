@@ -29,18 +29,20 @@ void *server_handler(void *serv_sock) {
         }
         std::cout << "\nConnection accepted" << std::endl;
         std::cout << "In list we have: " << clients.size() + 1 << "\n" << std::endl;
-        // так как new_socket пока не нужно убивать ставим false
-        pthread_mutex_lock(&mutex);
-        client_states[new_socket] = false;
-        pthread_mutex_unlock(&mutex);
-        // добавляем клиентов в мапу и даём каждому поток
-        pthread_mutex_lock(&mutex);
-        pthread_t clients_thread;
-        if (pthread_create(&clients_thread, nullptr, connection_handler, (void *) (intptr_t) new_socket) == 0)
-            clients.emplace(new_socket, clients_thread);
-        else client_states[new_socket] = true;
-        pthread_mutex_unlock(&mutex);
+        {
+            // так как new_socket пока не нужно убивать ставим false
+            std::unique_lock<std::mutex> lock(client_mutex);
+            client_states[new_socket] = false;
+        }
 
+        {
+            std::unique_lock<std::mutex> lock(mutex);
+            // добавляем клиентов в мапу и даём каждому поток
+            pthread_t clients_thread;
+            if (pthread_create(&clients_thread, nullptr, connection_handler, (void *) (intptr_t) new_socket) == 0)
+                clients.emplace(new_socket, clients_thread);
+            else client_states[new_socket] = true;
+        }
     }
     pthread_exit(nullptr);
 }

@@ -2,6 +2,7 @@
 
 // хэндлер клиента для чтения в отдельном потоке
 void *client_read_handler(void *ds) {
+    std::unique_lock<std::mutex> lock(mutex);
     // кастим к int, к нормальному виду дескриптора сокета
     auto &&desc_sock = (int) (intptr_t) ds;
     char buffer[BUFFER_SIZE + 1];
@@ -10,14 +11,15 @@ void *client_read_handler(void *ds) {
         // слушаем сервер
         if (readn(desc_sock, buffer, BUFFER_SIZE, 0) <= 0) {
             perror("Readn failed");
-            close(desc_sock);
             break;
         }
         // если сервер прислал "shutdown", то умираем
         if (strcmp(buffer, EXIT) == 0)
             break;
-        std::cout << "Server's response#" << response_number << ": " << buffer << "\n" << std::endl;
+
+        std::cout << "Server's response: " << buffer << "\n" << std::endl;
     }
+    shutdown(desc_sock, SHUT_RDWR);
     close(desc_sock);
     pthread_exit(nullptr);
 }
@@ -40,8 +42,6 @@ void client_help() {
 
 //  отправляем пример серверу
 void count(int client_socket) {
-    // FIXME
-    int temp_request_number = request_number;
     std::string count = COUNT;
     // говорим серверу, что хотим посчитать
     send(client_socket, count.c_str(), BUFFER_SIZE, 0);
@@ -59,20 +59,17 @@ void count(int client_socket) {
     send(client_socket, operation.c_str(), BUFFER_SIZE, 0);
     // если выполняем долгую операцию => вторая чиселка просто не нужна!
     if (strcmp(operation.c_str(), SQRT) != 0 && strcmp(operation.c_str(), FACTORIAL) != 0) {
-        // FIXME temp_request_number = request_number;
-        computation = first_num + operation + " ";
+        computation = first_num + " " + operation + " ";
         // вторая чиселка
         std::string second_num;
         std::cout << "Enter second number: ";
         std::getline(std::cin, second_num);
         computation += second_num;
-        // FIXME
-        std::cout << "Client's request#" << ++request_number << ": " << computation << std::endl;
+        //std::cout << "Client's request#" << ++request_number << ": " << computation << std::endl;
         send(client_socket, second_num.c_str(), BUFFER_SIZE, 0);
     } else {
         computation = operation + "(" + first_num + ")";
-        // FIXME
-        std::cout << "Client's request#" << temp_request_number << ": " << computation << std::endl;
+        //std::cout << "Client's request#" << request_number << ": " << computation << std::endl;
     }
 }
 
@@ -84,8 +81,7 @@ void text(int client_socket) {
         perror("Send error");
     // вводим сообщение для отправки на сервер
     std::string message;
-    // FIXME
-    std::cout << "Your message#" << ++request_number << " to server: ";
+    std::cout << "Your message to server: ";
     std::getline(std::cin, message);
     // отправляем message на сервер
     if (send(client_socket, message.c_str(), BUFFER_SIZE, 0) == -1)
@@ -120,14 +116,17 @@ int main(int argc, char **argv) {
     while (true) {
         std::string command;
         std::getline(std::cin, command);
-        if (command == TEXT)
-            text(client_socket);
-        else if (command == COUNT)
-            count(client_socket);
+        if (command == TEXT) text(client_socket);
+        else if (command == COUNT) count(client_socket);
         else if (command == EXIT) { ;
             shutdown(client_socket, SHUT_RDWR);
             close(client_socket);
             break;
+        } else {
+            if (send(client_socket, command.c_str(), BUFFER_SIZE, 0) < 0){
+                perror("Send failed");
+                break;
+            }
         }
     }
     // джойним поток на чтение и закрываем сокет

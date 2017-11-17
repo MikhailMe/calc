@@ -10,6 +10,6 @@ double factorial(double num) {
 }
 
 double mysqrt(double num) {
-    std::this_thread::sleep_for(std::chrono::seconds(5));
+    std::this_thread::sleep_for(std::chrono::seconds(10));
     return sqrt(num);
 }

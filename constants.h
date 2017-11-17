@@ -21,6 +21,8 @@ struct Count_info {
     bool isSlow;
 };
 
-pthread_mutex_t mutex;
+std::mutex mutex;
+std::mutex client_mutex;
+std::mutex wait_mutex;
 std::unordered_map<int, pthread_t> clients;
 std::unordered_map<int, bool> client_states;
